@@ -1,21 +1,34 @@
 use std::io;
 use std::env;
 use std::path;
-use std::process::{ExitStatus, ExitCode};
+use std::process::ExitStatus;
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(long, value_name = "FILE")]
+    bin: String
+}
 
 fn main() -> Result<(), io::Error> {
-    let project_root = get_project_root()?.as_path();
+    let args = Args::parse();
+    let app_name = &args.bin;
+
+    let project_root = get_project_root()?;
+    let project_root = project_root.as_path();
     let qemu_path = get_qemu_executable()?;
     let ovmf_path = get_ovmf(project_root)?;
-    let app_path = get_uefi_app(project_root, &app_name)?;
+    let app_path = get_uefi_app(project_root, app_name.as_str())?;
 
     // UEFIアプリケーションを配置するための一時ディレクトリを作成
     let mut uefi_app_dir = env::temp_dir();
     uefi_app_dir.push("UEFI");
-    let uefi_root = uefi_app_dir.clone().as_path();
+    let uefi_root = uefi_app_dir.clone();
+    let uefi_root = uefi_root.as_path();
     uefi_app_dir.push("EFI");
     uefi_app_dir.push("BOOT"); 
-    std::fs::create_dir_all(uefi_app_dir);
+    std::fs::create_dir_all(uefi_app_dir.as_path())?;
 
     // 作成したディレクトリにUEFIアプリケーションを配置
     uefi_app_dir.push("BOOTX64.EFI");
@@ -68,8 +81,9 @@ fn get_ovmf(project_root_dir: &path::Path) -> Result<path::PathBuf, io::Error> {
 fn get_uefi_app(project_root_dir: &path::Path, app_name: &str) -> Result<path::PathBuf, io::Error> {
     let mut app_path = project_root_dir.to_path_buf();
     app_path.push("target");
+    app_path.push("x86_64-unknown-uefi");
     app_path.push("debug");
-    app_path.push(app_name);
+    app_path.push(format!("{}.efi", app_name));
 
     if app_path.is_file() {
         Ok(app_path)
@@ -79,7 +93,7 @@ fn get_uefi_app(project_root_dir: &path::Path, app_name: &str) -> Result<path::P
 }
 
 fn run_qemu(qemu: &path::Path, ovmf: &path::Path, uefi_root: &path::Path) -> Result<ExitStatus, io::Error> { 
-    let process = std::process::Command::new(qemu.display().to_string())
+    let mut process = std::process::Command::new(qemu.display().to_string())
         .arg("-drive")
         .arg(format!("if=pflash,format=raw,readonly=on,file={}", ovmf.display())) 
         .arg("-drive")
