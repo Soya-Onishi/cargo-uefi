@@ -1,5 +1,6 @@
 use std::io;
 use std::env;
+use std::io::Read;
 use std::path;
 use std::process::ExitStatus;
 use clap::Parser;
@@ -11,7 +12,7 @@ use serde::Deserialize;
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(long, value_name = "FILE")]
-    bin: String
+    bin: Option<String>
 }
 
 #[derive(Deserialize)]
@@ -32,12 +33,18 @@ struct TomlBin {
 
 fn main() -> Result<(), io::Error> {
     let args = Args::parse();
-    let app_name = &args.bin;
 
     let project_root = get_project_root()?;
     let project_root = project_root.as_path();
     let qemu_path = get_qemu_executable()?;
     let ovmf_path = get_ovmf(project_root)?;
+
+    // 実行するアプリケーションを選択する
+    let cargo_toml_path = project_root.join("Cargo.toml");
+    let cargo_toml = std::fs::File::open(cargo_toml_path.as_path())?;
+    let mut toml = String::new();
+    cargo_toml.read_to_string(&mut toml);
+    let app_name = find_binary_name(&args.bin, toml.as_str())?;
     let app_path = get_uefi_app(project_root, app_name.as_str())?;
 
     // UEFIアプリケーションを配置するための一時ディレクトリを作成
@@ -121,6 +128,17 @@ fn run_qemu(qemu: &path::Path, ovmf: &path::Path, uefi_root: &path::Path) -> Res
    process.wait()
 }
 
+fn find_binary_name(app_name: &Option<String>, toml: &str) -> Result<String, io::Error> {
+    let names = get_binary_name(toml)?;
+    
+    match &app_name {
+        None if names.len() == 1 => Ok(names[0]),
+        None => Err(),
+        Some(name) if names.contains(&name) => Ok(name.clone()),
+        Some(_) => Err()
+    }
+}
+
 fn get_binary_name(toml: &str) -> Result<Vec<String>, toml_edit::de::Error> {
     let toml = easy::from_str::<TomlConfig>(toml)?;
     let bin_names: Vec<String> = toml.bin
@@ -135,44 +153,6 @@ fn get_binary_name(toml: &str) -> Result<Vec<String>, toml_edit::de::Error> {
     };
     
     Ok(names)
-}
-
-fn get_binary_names(toml: &Value) -> Vec<&String> {
-    fn get_from_bins(toml: &Value) -> Vec<&String> {
-        let value = toml.as_table()
-            .map(|t| t.get("bin"))
-            .flatten();
-
-        match value {
-            Some(Value::Array(array)) => array.iter()
-                .filter_map(|elem| elem.as_table())
-                .filter_map(|m| m.get("name"))
-                .filter_map(|name| if let Value::String(s) = name { Some(s) } else { None })
-                .collect(),
-            Some(Value::Table(table)) => table.get("name")
-                .into_iter()
-                .filter_map(|v| if let Value::String(s) = v { Some(s) } else { None })
-                .collect(),
-            _ => Vec::new(),
-        }
-    }
-
-    fn get_from_package(toml: &Value) -> Option<&String> {
-        toml.as_table()
-            .map(|t| t.get("package"))
-            .flatten()
-            .map(|t| t.get("name"))
-            .flatten()
-            .map(|n| if let Value::String(s) = n { Some(s) } else { None })
-            .flatten()
-    }
-    
-    let bin_names = get_from_bins(toml);
-    if bin_names.is_empty() {
-        get_from_package(toml).into_iter().collect()
-    } else {
-        bin_names
-    }
 }
 
 #[cfg(test)]
