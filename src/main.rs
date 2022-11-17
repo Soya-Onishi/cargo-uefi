@@ -1,3 +1,5 @@
+mod error;
+
 use std::io;
 use std::env;
 use std::io::Read;
@@ -5,7 +7,6 @@ use std::path;
 use std::process::ExitStatus;
 use clap::Parser;
 use toml_edit::easy;
-use toml_edit::easy::value::Value;
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -31,7 +32,7 @@ struct TomlBin {
     name: Option<String>
 }
 
-fn main() -> Result<(), io::Error> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let project_root = get_project_root()?;
@@ -41,7 +42,7 @@ fn main() -> Result<(), io::Error> {
 
     // 実行するアプリケーションを選択する
     let cargo_toml_path = project_root.join("Cargo.toml");
-    let cargo_toml = std::fs::File::open(cargo_toml_path.as_path())?;
+    let mut cargo_toml = std::fs::File::open(cargo_toml_path.as_path())?;
     let mut toml = String::new();
     cargo_toml.read_to_string(&mut toml);
     let app_name = find_binary_name(&args.bin, toml.as_str())?;
@@ -128,15 +129,23 @@ fn run_qemu(qemu: &path::Path, ovmf: &path::Path, uefi_root: &path::Path) -> Res
    process.wait()
 }
 
-fn find_binary_name(app_name: &Option<String>, toml: &str) -> Result<String, io::Error> {
+fn find_binary_name(app_name: &Option<String>, toml: &str) -> Result<String, Box<dyn std::error::Error>> {
     let names = get_binary_name(toml)?;
     
-    match &app_name {
-        None if names.len() == 1 => Ok(names[0]),
-        None => Err(),
+    let result = match &app_name {
+        None if names.len() == 1 => Ok(names[0].clone()),
+        None => Err(crate::error::Error::new(
+            error::ErrorKind::NotAbleDetermineBinary, 
+            format!("multiple candidates exists, not ablt to determine. {:?}", names)
+        )),
         Some(name) if names.contains(&name) => Ok(name.clone()),
-        Some(_) => Err()
-    }
+        Some(name) => Err(error::Error::new(
+            error::ErrorKind::BinaryNotFound,
+            format!("binary {} is not found", name)
+        ))
+    };
+
+    result.map_err(|e| Box::<dyn std::error::Error>::from(e))
 }
 
 fn get_binary_name(toml: &str) -> Result<Vec<String>, toml_edit::de::Error> {
