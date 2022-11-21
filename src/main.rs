@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cargo_toml_path = project_root.join("Cargo.toml");
     let mut cargo_toml = std::fs::File::open(cargo_toml_path.as_path())?;
     let mut toml = String::new();
-    cargo_toml.read_to_string(&mut toml);
+    let _ = cargo_toml.read_to_string(&mut toml)?;
     let app_name = find_binary_name(&args.bin, toml.as_str())?;
     let app_path = get_uefi_app(project_root, app_name.as_str())?;
 
@@ -166,8 +166,6 @@ fn get_binary_name(toml: &str) -> Result<Vec<String>, toml_edit::de::Error> {
 
 #[cfg(test)]
 mod test {
-    use toml_edit::easy;
-
     use crate::get_binary_name;
 
     #[test]

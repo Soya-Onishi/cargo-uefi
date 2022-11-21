@@ -20,6 +20,7 @@ impl Error {
         }
     }
 
+    #[allow(dead_code)]
     pub fn kind(&self) -> ErrorKind {
         self.kind
     }
