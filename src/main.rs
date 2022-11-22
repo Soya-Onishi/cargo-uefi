@@ -128,9 +128,9 @@ fn run_qemu(qemu: &path::Path, ovmf: &path::Path, uefi_root: &path::Path, option
         .arg("-drive")
         .arg(format!("format=raw,file=fat:rw:{}", uefi_root.display()))
         .args(options)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .spawn()?;
 
    process.wait()
