@@ -13,7 +13,10 @@ use serde::Deserialize;
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(long, value_name = "FILE")]
-    bin: Option<String>
+    bin: Option<String>,
+
+    #[arg(last = true)]
+    qemu_cmd: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,8 +60,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let uefi_app_path = uefi_app_dir.join("BOOTX64.EFI");  
     std::fs::copy(app_path, uefi_app_path)?;
 
+    // QEMU向けのコマンドライン引数を取得
+    let qemu_options = args.qemu_cmd;
+
     // QEMUを実行
-    run_qemu(qemu_path.as_path(), ovmf_path.as_path(), uefi_root.as_path())?;
+    run_qemu(qemu_path.as_path(), ovmf_path.as_path(), uefi_root.as_path(), qemu_options)?;
 
     Ok(())
 }
@@ -115,12 +121,13 @@ fn get_uefi_app(project_root_dir: &path::Path, app_name: &str) -> Result<path::P
     }
 }
 
-fn run_qemu(qemu: &path::Path, ovmf: &path::Path, uefi_root: &path::Path) -> Result<ExitStatus, io::Error> { 
+fn run_qemu(qemu: &path::Path, ovmf: &path::Path, uefi_root: &path::Path, options: Vec<String>) -> Result<ExitStatus, io::Error> { 
     let mut process = std::process::Command::new(qemu.display().to_string())
         .arg("-drive")
         .arg(format!("if=pflash,format=raw,readonly=on,file={}", ovmf.display())) 
         .arg("-drive")
         .arg(format!("format=raw,file=fat:rw:{}", uefi_root.display()))
+        .args(options)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
