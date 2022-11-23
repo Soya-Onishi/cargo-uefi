@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn get_project_root() -> Result<path::PathBuf, io::Error> {
-    let cargo_name = "Cargo.toml";
+    let cargo_name = "Cargo.lock";
     let current_dir = env::current_dir()?;
     let mut ancestors = current_dir.ancestors();
 
