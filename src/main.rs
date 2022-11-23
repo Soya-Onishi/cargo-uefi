@@ -21,8 +21,9 @@ struct Args {
 
 #[derive(Deserialize)]
 struct TomlConfig {
-    package: TomlPackage,
-    bin: Option<Vec<TomlBin>>
+    package: Option<TomlPackage>,
+    bin: Option<Vec<TomlBin>>,
+    workspace: Option<TomlWorkspace>,
 }
 
 #[derive(Deserialize)]
@@ -33,6 +34,11 @@ struct TomlPackage {
 #[derive(Deserialize)]
 struct TomlBin {
     name: Option<String>
+}
+
+#[derive(Deserialize)]
+struct TomlWorkspace {
+    members: Option<Vec<String>>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -48,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cargo_toml = std::fs::File::open(cargo_toml_path.as_path())?;
     let mut toml = String::new();
     let _ = cargo_toml.read_to_string(&mut toml)?;
-    let app_name = find_binary_name(&args.bin, toml.as_str())?;
+    let app_name = find_binary_name(&args.bin, toml.as_str(), project_root)?;
     let app_path = get_uefi_app(project_root, app_name.as_str())?;
 
     // UEFIアプリケーションを配置するための一時ディレクトリを作成
@@ -136,8 +142,8 @@ fn run_qemu(qemu: &path::Path, ovmf: &path::Path, uefi_root: &path::Path, option
    process.wait()
 }
 
-fn find_binary_name(app_name: &Option<String>, toml: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let names = get_binary_name(toml)?;
+fn find_binary_name(app_name: &Option<String>, toml: &str, root: &path::Path) -> Result<String, Box<dyn std::error::Error>> {
+    let names = get_binary_name(toml, root)?;
     
     let result = match &app_name {
         None if names.len() == 1 => Ok(names[0].clone()),
@@ -155,18 +161,45 @@ fn find_binary_name(app_name: &Option<String>, toml: &str) -> Result<String, Box
     result.map_err(|e| Box::<dyn std::error::Error>::from(e))
 }
 
-fn get_binary_name(toml: &str) -> Result<Vec<String>, toml_edit::de::Error> {
+fn get_binary_name(toml: &str, project_root: &path::Path) -> Result<Vec<String>, toml_edit::de::Error> {
+    fn get_name_from_workspace(toml: &TomlConfig, root: &path::Path) -> Option<Vec<String>> {
+        toml.workspace.as_ref().and_then(|w| w.members.as_ref()).map(|mems| {
+            mems.iter()
+                .map(|m| root.join(m))
+                .map(|ws| { let toml = ws.join("Cargo.toml"); (ws, toml) })
+                .filter(|(_, p)| p.is_file())
+                .map(|(ws, p)| (ws, std::fs::File::open(p)))
+                .filter_map(|(ws, f)| f.ok().map(|f| (ws, f)))
+                .map(|(ws, mut f)| {
+                    let mut buf = String::new();
+                    let err_msg = format!("failed to read from file: {:?}", ws.join("Cargo.toml"));
+                    f.read_to_string(&mut buf).expect(&err_msg);
+
+                    (ws, buf)
+                }) 
+                .map(|(w, b)| get_binary_name(&b, w.as_path()))
+                .map(|r| r.ok())
+                .flatten()
+                .flatten()
+                .collect()
+        })
+    }
+
+    fn get_name_fron_bins(toml: &TomlConfig) -> Option<Vec<String>> {
+        toml.bin.as_ref().map(|bins| bins.into_iter().filter_map(|b| b.name.clone()).collect()) 
+    }
+
+    fn get_name_from_package(toml: &TomlConfig) -> Option<Vec<String>> {
+        toml.package.as_ref().and_then(|p| p.name.as_ref().map(|n| vec![n.clone()]))
+    }
+
     let toml = easy::from_str::<TomlConfig>(toml)?;
-    let bin_names: Vec<String> = toml.bin
-        .unwrap_or(Vec::new())
-        .into_iter()
-        .filter_map(|b| b.name)
-        .collect();
-    let names = if bin_names.is_empty() {
-        toml.package.name.into_iter().collect()
-    } else {
-        bin_names
-    };
+    
+    let names = 
+        get_name_from_workspace(&toml, project_root)
+        .or(get_name_fron_bins(&toml))
+        .or(get_name_from_package(&toml))
+        .unwrap_or(Vec::new());
     
     Ok(names)
 }
@@ -174,6 +207,7 @@ fn get_binary_name(toml: &str) -> Result<Vec<String>, toml_edit::de::Error> {
 #[cfg(test)]
 mod test {
     use crate::get_binary_name;
+    use std::path;
 
     #[test]
     fn parse_one_bin_pattern() {
@@ -185,8 +219,9 @@ mod test {
         name = "fuga"
         path = "src/fuga/main.rs"
         "#;
-        
-        let names = get_binary_name(toml).unwrap();
+       
+        let dummy = path::Path::new("/");
+        let names = get_binary_name(toml, dummy).unwrap();
         assert_eq!(names.len(), 1);
         assert_eq!(names[0], "fuga");
     }
@@ -206,7 +241,8 @@ mod test {
         path = "src/fugafuga/main.rs" 
         "#;
 
-        let names = get_binary_name(toml).unwrap();
+        let dummy = path::Path::new("/");
+        let names = get_binary_name(toml, dummy).unwrap();
         assert_eq!(names.len(), 2);
         assert_eq!(names[0], "hogehoge");
         assert_eq!(names[1], "fugafuga"); 
@@ -222,7 +258,8 @@ mod test {
         fuga = "0.1.0"
         "#;
 
-        let names = get_binary_name(toml).unwrap();
+        let dummy = path::Path::new("/");
+        let names = get_binary_name(toml, dummy).unwrap();
         assert_eq!(names.len(), 1);
         assert_eq!(names[0], "hoge");
     }
